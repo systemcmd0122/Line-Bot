@@ -159,15 +159,12 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-// Webhookのヘルスチェック用エンドポイント
 app.get('/webhook', (req, res) => {
   res.status(200).send('Webhook is healthy');
 });
 
-// LINEクライアントの初期化
 const client = new line.Client(config);
 
-// Webhookエンドポイント
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise
     .all(req.body.events.map(handleEvent))
@@ -178,10 +175,8 @@ app.post('/webhook', line.middleware(config), (req, res) => {
     });
 });
 
-// イベントハンドラー
 async function handleEvent(event) {
   if (event.type !== 'message' || event.message.type !== 'text') {
-    // テキストメッセージ以外は無視
     return Promise.resolve(null);
   }
 
@@ -215,14 +210,12 @@ async function handleEvent(event) {
     replyMessage = '時間割ボットをご利用いただきありがとうございます。「使い方」と入力すると、使用可能なコマンドが表示されます。';
   }
 
-  // 返信メッセージを送信
   return client.replyMessage(event.replyToken, {
     type: 'text',
     text: replyMessage
   });
 }
 
-// 特定の曜日の時間割を取得する関数
 function getTimetableForDay(dayOfWeek) {
   const subjects = timetableData[dayOfWeek];
   
@@ -236,21 +229,18 @@ function getTimetableForDay(dayOfWeek) {
   return `【${dayOfWeek}の時間割】\n${subjects.map((subject, index) => `${index + 1}時間目: ${subject}`).join('\n')}`;
 }
 
-// サーバーを15分ごとに自己ピング（Koyebの無料プランでもオフラインにならないように）
 const keepAlive = () => {
   setInterval(() => {
     console.log('Keeping server alive: ' + new Date().toISOString());
-  }, 5 * 60 * 1000); // 5分ごとにログ出力
+  }, 5 * 60 * 1000);
 };
 
-// サーバー起動
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`LINE Bot server is running on port ${port}`);
-  keepAlive(); // 自己ピング開始
+  keepAlive();
 });
 
-// Koyebはprocess.env.PORTを使用するので、package.jsonのスクリプトは以下のようにする
 /*
 {
   "name": "line-timetable-bot",
