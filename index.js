@@ -1,7 +1,9 @@
-// Koyeb用 LINE時間割ボット（設定機能なし・動作確認サイト付き）
+// Koyeb用 LINE時間割ボット（設定機能なし・動作確認サイト付き・天気予報と定時通知機能付き）
 const express = require('express');
 const line = require('@line/bot-sdk');
 const path = require('path');
+const axios = require('axios'); // 外部APIリクエスト用
+const cron = require('node-cron'); // スケジュールタスク用
 
 const config = {
   channelAccessToken: 'a0jMn1h2zhLfz4+XCzpjWG8GnQAtp6ub3EO6ZNzvMl5RYHCaHMBK7lxVSdgAm2zJVRO3SsWPXlJfHs1FRjdzcj0rq+7iDe4H5ZsBNKPBY9cQYDdAAdjBCr21SCTV2XQPSvoX3KtZESwRL/P9/+CB8wdB04t89/1O/w1cDnyilFU=',
@@ -19,6 +21,45 @@ const timetableData = {
   "日曜日": []
 };
 
+// 天気コード（WMO Weather interpretation codes）と対応する日本語の説明
+const weatherCodeMap = {
+  0: "快晴",
+  1: "晴れ",
+  2: "一部曇り",
+  3: "曇り",
+  45: "霧",
+  48: "霧氷",
+  51: "軽い霧雨",
+  53: "霧雨",
+  55: "強い霧雨",
+  56: "氷点下の霧雨",
+  57: "強い氷点下の霧雨",
+  61: "小雨",
+  63: "雨",
+  65: "強い雨",
+  66: "氷点下の雨",
+  67: "強い氷点下の雨",
+  71: "小雪",
+  73: "雪",
+  75: "強い雪",
+  77: "霰",
+  80: "弱いにわか雨",
+  81: "にわか雨",
+  82: "強いにわか雨",
+  85: "小さな雪のシャワー",
+  86: "大きな雪のシャワー",
+  95: "雷雨",
+  96: "雷雨と小さな雹",
+  99: "雷雨と大きな雹"
+};
+
+// 傘が必要な天気コード
+const umbrellaNeededCodes = [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99];
+
+// 学校の位置情報 (例: 東京の座標)
+const SCHOOL_LATITUDE = 35.6895;
+const SCHOOL_LONGITUDE = 139.6917;
+
 const app = express();
 
 // 静的ファイルの提供設定を追加
@@ -26,6 +67,151 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/images', express.static(path.join(__dirname, 'images')));
 
 const SITE_URL = 'https://wasteful-morgan-tisk01010100-446ccc96.koyeb.app/';
+
+// LINEクライアントの初期化
+const client = new line.Client(config);
+
+// ユーザーIDの保存用配列
+let subscribedUsers = [];
+
+// 購読者リストの管理
+function saveSubscriber(userId) {
+  if (!subscribedUsers.includes(userId)) {
+    subscribedUsers.push(userId);
+    console.log(`新しいユーザーが登録されました: ${userId}`);
+    return true;
+  }
+  return false;
+}
+
+function removeSubscriber(userId) {
+  const index = subscribedUsers.indexOf(userId);
+  if (index !== -1) {
+    subscribedUsers.splice(index, 1);
+    console.log(`ユーザーが購読解除しました: ${userId}`);
+    return true;
+  }
+  return false;
+}
+
+// 天気情報を取得する関数
+async function getWeatherForecast() {
+  try {
+    const response = await axios.get(`https://api.open-meteo.com/v1/forecast`, {
+      params: {
+        latitude: SCHOOL_LATITUDE,
+        longitude: SCHOOL_LONGITUDE,
+        daily: 'weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum',
+        timezone: 'Asia/Tokyo',
+        forecast_days: 1
+      }
+    });
+
+    const data = response.data;
+    const weatherCode = data.daily.weathercode[0];
+    const maxTemp = data.daily.temperature_2m_max[0];
+    const minTemp = data.daily.temperature_2m_min[0];
+    const precipitation = data.daily.precipitation_sum[0];
+
+    return {
+      weatherCode,
+      weatherDescription: weatherCodeMap[weatherCode] || "不明な天気",
+      maxTemp,
+      minTemp,
+      precipitation,
+      umbrellaNeeded: umbrellaNeededCodes.includes(weatherCode) || precipitation > 1.0
+    };
+  } catch (error) {
+    console.error('天気情報の取得に失敗しました:', error);
+    return null;
+  }
+}
+
+// 天気に基づいたアドバイスを生成する関数
+function generateWeatherAdvice(weather) {
+  let advice = '';
+
+  if (weather.umbrellaNeeded) {
+    advice += '☂️ 降水の可能性があります。傘を忘れずに持っていきましょう。\n';
+  }
+
+  if (weather.maxTemp >= 30) {
+    advice += '🔥 今日は気温が高くなります。熱中症に注意し、こまめに水分補給をしましょう。\n';
+  } else if (weather.maxTemp >= 25) {
+    advice += '☀️ 暖かい一日になりそうです。水分補給を忘れずに。\n';
+  } else if (weather.minTemp <= 5) {
+    advice += '❄️ 寒い一日になりそうです。暖かい服装で登校しましょう。\n';
+  }
+
+  return advice.trim();
+}
+
+// 毎日24時（0時）に翌日の時間割と天気予報を送信するスケジュールタスク
+cron.schedule('0 0 * * *', async () => {
+  console.log('毎日の時間割と天気情報を送信します...');
+  
+  try {
+    // 翌日の時間割を取得
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dayOfWeek = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'][tomorrow.getDay()];
+    
+    // 土日は送信しない選択肢もある
+    if (dayOfWeek === '土曜日' || dayOfWeek === '日曜日') {
+      console.log('週末は時間割通知をスキップします');
+      return;
+    }
+    
+    // 天気情報を取得
+    const weather = await getWeatherForecast();
+    
+    let message = `【明日(${tomorrow.getMonth()+1}月${tomorrow.getDate()}日・${dayOfWeek})の時間割】\n`;
+    
+    const subjects = timetableData[dayOfWeek];
+    if (subjects && subjects.length > 0) {
+      message += subjects.map((subject, index) => `${index + 1}時間目: ${subject}`).join('\n');
+    } else {
+      message += '授業はありません。';
+    }
+    
+    // 天気情報を追加
+    if (weather) {
+      message += `\n\n【明日の天気予報】\n${weather.weatherDescription}\n気温: ${weather.minTemp}℃～${weather.maxTemp}℃\n`;
+      
+      // アドバイスがあれば追加
+      const advice = generateWeatherAdvice(weather);
+      if (advice) {
+        message += `\n【アドバイス】\n${advice}`;
+      }
+    }
+    
+    // 登録ユーザー全員に送信
+    if (subscribedUsers.length > 0) {
+      const promises = subscribedUsers.map(userId => {
+        return client.pushMessage(userId, {
+          type: 'text',
+          text: message
+        }).catch(err => {
+          console.error(`ユーザー ${userId} へのメッセージ送信に失敗しました:`, err);
+          
+          // エラーコードが4xx系の場合はユーザーリストから削除（ブロックされた可能性）
+          if (err.statusCode >= 400 && err.statusCode < 500) {
+            removeSubscriber(userId);
+          }
+        });
+      });
+      
+      await Promise.all(promises);
+      console.log(`${subscribedUsers.length}人のユーザーに時間割と天気情報を送信しました`);
+    } else {
+      console.log('登録ユーザーがいないため、メッセージは送信されませんでした');
+    }
+  } catch (error) {
+    console.error('毎日のメッセージ送信中にエラーが発生しました:', error);
+  }
+}, {
+  timezone: 'Asia/Tokyo'
+});
 
 app.get('/', (req, res) => {
   const html = `
@@ -227,6 +413,10 @@ app.get('/', (req, res) => {
           <li><strong>今日の時間割</strong> - 今日の時間割を表示します</li>
           <li><strong>明日の時間割</strong> - 明日の時間割を表示します</li>
           <li><strong>月曜日の時間割</strong> (他の曜日も同様) - 指定した曜日の時間割を表示します</li>
+          <li><strong>天気</strong> - 今日の天気予報を表示します</li>
+          <li><strong>明日の天気</strong> - 明日の天気予報を表示します</li>
+          <li><strong>通知登録</strong> - 毎日24時の時間割と天気予報の自動通知を登録します</li>
+          <li><strong>通知解除</strong> - 自動通知を解除します</li>
           <li><strong>使い方</strong> or <strong>ヘルプ</strong> - コマンド一覧を表示します</li>
         </ul>
       </div>
@@ -283,8 +473,6 @@ app.get('/webhook', (req, res) => {
   res.status(200).send('Webhook is healthy');
 });
 
-const client = new line.Client(config);
-
 app.post('/webhook', line.middleware(config), (req, res) => {
   Promise
     .all(req.body.events.map(handleEvent))
@@ -305,6 +493,7 @@ async function handleEvent(event) {
   
   // グループチャットとプライベートチャットの判定
   const isGroupChat = event.source.type === 'group' || event.source.type === 'room';
+  const userId = event.source.userId;
 
   // グループチャットの場合は「使い方」か「ヘルプ」の場合のみ反応
   if (isGroupChat) {
@@ -313,6 +502,8 @@ async function handleEvent(event) {
 ・「今日の時間割」：今日の時間割を表示します
 ・「明日の時間割」：明日の時間割を表示します
 ・「〇曜日の時間割」：指定した曜日の時間割を表示します
+・「天気」：今日の天気予報を表示します
+・「明日の天気」：明日の天気予報を表示します
 
 詳しい使い方と時間割表はこちらのサイトでご確認いただけます：
 ${SITE_URL}`;
@@ -327,6 +518,10 @@ ${SITE_URL}`;
 ・「今日の時間割」：今日の時間割を表示します
 ・「明日の時間割」：明日の時間割を表示します
 ・「〇曜日の時間割」：指定した曜日の時間割を表示します
+・「天気」：今日の天気予報を表示します
+・「明日の天気」：明日の天気予報を表示します
+・「通知登録」：毎日24時の時間割と天気予報の自動通知を登録します
+・「通知解除」：自動通知を解除します
 
 詳しい使い方と時間割表はこちらのサイトでご確認いただけます：
 ${SITE_URL}`;
@@ -346,7 +541,63 @@ ${SITE_URL}`;
     else if (/^(月|火|水|木|金|土|日)曜日の時間割$/.test(userMessage)) {
       const dayOfWeek = userMessage.replace('の時間割', '');
       replyMessage = getTimetableForDay(dayOfWeek);
-    } 
+    }
+    else if (userMessage === '天気' || userMessage === '今日の天気') {
+      try {
+        const weather = await getWeatherForecast();
+        if (weather) {
+          let message = `【今日の天気予報】\n${weather.weatherDescription}\n気温: ${weather.minTemp}℃～${weather.maxTemp}℃\n`;
+          
+          // アドバイスがあれば追加
+          const advice = generateWeatherAdvice(weather);
+          if (advice) {
+            message += `\n【アドバイス】\n${advice}`;
+          }
+          
+          replyMessage = message;
+        } else {
+          replyMessage = '申し訳ありません。天気情報の取得に失敗しました。';
+        }
+      } catch (error) {
+        console.error('天気情報取得エラー:', error);
+        replyMessage = '申し訳ありません。天気情報の取得に失敗しました。';
+      }
+    }
+    else if (userMessage === '明日の天気') {
+      try {
+        const weather = await getWeatherForecast(); // 明日の天気も同じAPIで取得可能
+        if (weather) {
+          let message = `【明日の天気予報】\n${weather.weatherDescription}\n気温: ${weather.minTemp}℃～${weather.maxTemp}℃\n`;
+          
+          // アドバイスがあれば追加
+          const advice = generateWeatherAdvice(weather);
+          if (advice) {
+            message += `\n【アドバイス】\n${advice}`;
+          }
+          
+          replyMessage = message;
+        } else {
+          replyMessage = '申し訳ありません。天気情報の取得に失敗しました。';
+        }
+      } catch (error) {
+        console.error('天気情報取得エラー:', error);
+        replyMessage = '申し訳ありません。天気情報の取得に失敗しました。';
+      }
+    }
+    else if (userMessage === '通知登録') {
+      if (saveSubscriber(userId)) {
+        replyMessage = '毎日24時（午前0時）に翌日の時間割と天気予報をお知らせする通知に登録しました。';
+      } else {
+        replyMessage = 'すでに通知に登録されています。';
+      }
+    }
+    else if (userMessage === '通知解除') {
+      if (removeSubscriber(userId)) {
+        replyMessage = '通知を解除しました。';
+      } else {
+        replyMessage = '通知登録がされていません。';
+      }
+    }
     else {
       replyMessage = '時間割ボットをご利用いただきありがとうございます。「使い方」と入力すると、使用可能なコマンドが表示されます。';
     }
@@ -376,11 +627,17 @@ function getTimetableForDay(dayOfWeek) {
   return `【${dayOfWeek}の時間割】\n${subjects.map((subject, index) => `${index + 1}時間目: ${subject}`).join('\n')}`;
 }
 
+// サーバーが終了しないようにする関数
 const keepAlive = () => {
   setInterval(() => {
     console.log('Keeping server alive: ' + new Date().toISOString());
   }, 5 * 60 * 1000);
 };
+
+// メモリ内の購読者リストを定期的に表示（デバッグ用）
+setInterval(() => {
+  console.log(`現在の購読者数: ${subscribedUsers.length}`);
+}, 30 * 60 * 1000); // 30分ごと
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
