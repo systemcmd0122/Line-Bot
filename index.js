@@ -257,7 +257,7 @@ app.get('/', (req, res) => {
       <div class="qr-section">
         <h2>友だち追加</h2>
         <p>下記QRコードを読み取って、LINE Botを友だち追加してください。</p>
-        <img src="/QR.png" alt="LINE Bot QRコード" />
+        <img src="./QR.png" alt="LINE Bot QRコード" />
       </div>
       
       <footer>
