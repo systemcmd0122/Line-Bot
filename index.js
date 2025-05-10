@@ -1,8 +1,7 @@
-// Koyeb用 LINE時間割ボット（設定機能なし・動作確認サイト付き・毎日24時自動送信機能付き）
+// Koyeb用 LINE時間割ボット（設定機能なし・動作確認サイト付き）
 const express = require('express');
 const line = require('@line/bot-sdk');
 const path = require('path');
-const cron = require('node-cron');
 const fs = require('fs');
 
 // LINE Botの設定
@@ -34,35 +33,8 @@ const validCommands = [
   '木曜日の時間割',
   '金曜日の時間割',
   '土曜日の時間割',
-  '日曜日の時間割',
-  '自動通知オン',
-  '自動通知オフ'
+  '日曜日の時間割'
 ];
-
-// 購読者リストの永続化のためのファイルパス
-const SUBSCRIBERS_FILE = 'subscribers.json';
-
-// 購読者リストの読み込み
-let subscribedUsers = new Set();
-try {
-  if (fs.existsSync(SUBSCRIBERS_FILE)) {
-    const data = JSON.parse(fs.readFileSync(SUBSCRIBERS_FILE, 'utf8'));
-    subscribedUsers = new Set(data);
-    console.log('Loaded subscribers:', subscribedUsers.size);
-  }
-} catch (error) {
-  console.error('Error loading subscribers:', error);
-}
-
-// 購読者リストの保存関数
-function saveSubscribers() {
-  try {
-    fs.writeFileSync(SUBSCRIBERS_FILE, JSON.stringify(Array.from(subscribedUsers)));
-    console.log('Saved subscribers:', subscribedUsers.size);
-  } catch (error) {
-    console.error('Error saving subscribers:', error);
-  }
-}
 
 const app = express();
 
@@ -70,7 +42,7 @@ const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/images', express.static(path.join(__dirname, 'images')));
 
-const SITE_URL = 'https://wasteful-morgan-tisk01010100-446ccc96.koyeb.app/';
+const SITE_URL = 'https://shs2d-linebot.aeroindust.com';
 
 const client = new line.Client(config);
 
@@ -267,7 +239,6 @@ app.get('/', (req, res) => {
           minute: '2-digit',
           second: '2-digit'
         })}</p>
-        <p>✅ 毎日24時（0時）に明日の時間割を自動送信</p>
         <p>✅ グループチャットではコマンドのみに反応</p>
       </div>
       
@@ -277,8 +248,6 @@ app.get('/', (req, res) => {
           <li><strong>今日の時間割</strong> - 今日の時間割を表示します</li>
           <li><strong>明日の時間割</strong> - 明日の時間割を表示します</li>
           <li><strong>月曜日の時間割</strong> (他の曜日も同様) - 指定した曜日の時間割を表示します</li>
-          <li><strong>自動通知オン</strong> - 毎日24時に明日の時間割を自動送信します</li>
-          <li><strong>自動通知オフ</strong> - 自動送信を停止します</li>
           <li><strong>使い方</strong> or <strong>ヘルプ</strong> - コマンド一覧を表示します</li>
         </ul>
       </div>
@@ -301,6 +270,7 @@ app.get('/', (req, res) => {
             <tr>
               <td class="day">${day}</td>
               ${subjects.map(subject => `<td>${subject}</td>`).join('')}
+              ${subjects.length < 6 ? Array(6 - subjects.length).fill('<td></td>').join('') : ''}
             </tr>
           `).join('')}
         </table>
@@ -379,7 +349,7 @@ async function handleEvent(event) {
   console.log('Chat type:', event.source.type, 'Chat ID:', chatId, 'Is group:', isGroup);
 
   // グループチャットの場合、コマンドかどうかをチェック
-  if (isGroup && !validCommands.includes(userMessage) && !userMessage.match(/^(月|火|水|木|金|土|日)曜日の時間割$/)) {
+  if (isGroup && !validCommands.some(cmd => userMessage === cmd)) {
     console.log('Ignoring non-command message in group chat');
     return Promise.resolve(null);
   }
@@ -395,29 +365,26 @@ async function handleEvent(event) {
     else if (userMessage === '明日の時間割') {
       replyMessage = getTomorrowTimetable();
     } 
-    else if (/^(月|火|水|木|金|土|日)曜日の時間割$/.test(userMessage)) {
-      const dayOfWeek = userMessage.replace('の時間割', '');
-      replyMessage = getTimetableForDay(dayOfWeek + '曜日');
-    } 
-    else if (userMessage === '自動通知オン') {
-      if (!subscribedUsers.has(chatId)) {
-        subscribedUsers.add(chatId);
-        saveSubscribers();
-        replyMessage = '自動通知をオンにしました。毎日24時（0時）に明日の時間割を送信します。';
-        console.log('Added subscriber:', chatId);
-      } else {
-        replyMessage = 'すでに自動通知はオンになっています。';
-      }
+    else if (userMessage === '月曜日の時間割') {
+      replyMessage = getTimetableForDay('月曜日');
     }
-    else if (userMessage === '自動通知オフ') {
-      if (subscribedUsers.has(chatId)) {
-        subscribedUsers.delete(chatId);
-        saveSubscribers();
-        replyMessage = '自動通知をオフにしました。';
-        console.log('Removed subscriber:', chatId);
-      } else {
-        replyMessage = '自動通知はすでにオフになっています。';
-      }
+    else if (userMessage === '火曜日の時間割') {
+      replyMessage = getTimetableForDay('火曜日');
+    }
+    else if (userMessage === '水曜日の時間割') {
+      replyMessage = getTimetableForDay('水曜日');
+    }
+    else if (userMessage === '木曜日の時間割') {
+      replyMessage = getTimetableForDay('木曜日');
+    }
+    else if (userMessage === '金曜日の時間割') {
+      replyMessage = getTimetableForDay('金曜日');
+    }
+    else if (userMessage === '土曜日の時間割') {
+      replyMessage = getTimetableForDay('土曜日');
+    }
+    else if (userMessage === '日曜日の時間割') {
+      replyMessage = getTimetableForDay('日曜日');
     }
     else {
       // グループの場合はここには到達しないはず（上部でフィルタリング済み）
@@ -453,8 +420,6 @@ function createHelpMessage() {
 ・「今日の時間割」：今日の時間割を表示します
 ・「明日の時間割」：明日の時間割を表示します
 ・「〇曜日の時間割」：指定した曜日の時間割を表示します
-・「自動通知オン」：毎日24時に明日の時間割を自動送信します
-・「自動通知オフ」：自動送信を停止します
 
 詳しい使い方と時間割表はこちらのサイトでご確認いただけます：
 ${SITE_URL}`;
@@ -480,9 +445,15 @@ function getTomorrowTimetable() {
 
 // 指定した曜日の時間割を取得
 function getTimetableForDay(dayOfWeek) {
+  console.log(`Getting timetable for ${dayOfWeek}`);
+  
+  if (!timetableData[dayOfWeek]) {
+    return `指定された曜日「${dayOfWeek}」の時間割情報がありません。`;
+  }
+  
   const subjects = timetableData[dayOfWeek];
   
-  if (!subjects || subjects.length === 0) {
+  if (subjects.length === 0) {
     if (dayOfWeek === '土曜日' || dayOfWeek === '日曜日') {
       return `${dayOfWeek}は授業がありません。`;
     }
@@ -491,47 +462,6 @@ function getTimetableForDay(dayOfWeek) {
   
   return `【${dayOfWeek}の時間割】\n${subjects.map((subject, index) => `${index + 1}時間目: ${subject}`).join('\n')}`;
 }
-
-// 毎日の時間割自動送信
-async function sendDailyTimetable() {
-  try {
-    console.log('Starting daily timetable notification:', new Date().toISOString());
-    console.log('Subscribers count:', subscribedUsers.size);
-
-    const tomorrowTimetable = getTomorrowTimetable();
-    const notificationMessage = `【明日の時間割のお知らせ】\n${tomorrowTimetable}`;
-    
-    const promises = Array.from(subscribedUsers).map(async (userId) => {
-      try {
-        console.log('Sending notification to:', userId);
-        await client.pushMessage(userId, {
-          type: 'text',
-          text: notificationMessage
-        });
-        console.log('Successfully sent notification to:', userId);
-      } catch (err) {
-        console.error(`Failed to send message to ${userId}:`, err);
-        
-        if (err.statusCode === 400 || err.statusCode === 404 || err.statusCode === 500) {
-          subscribedUsers.delete(userId);
-          saveSubscribers();
-          console.log(`Removed invalid user ${userId} from subscribers list`);
-        }
-      }
-    });
-    
-    await Promise.all(promises);
-    console.log('Daily timetable notification completed');
-  } catch (error) {
-    console.error('Error in sendDailyTimetable:', error);
-  }
-}
-
-// Cronジョブの設定
-cron.schedule('0 15 * * *', sendDailyTimetable, {
-  scheduled: true,
-  timezone: "UTC"
-});
 
 // サーバーのキープアライブ
 const keepAlive = () => {
@@ -544,6 +474,5 @@ const keepAlive = () => {
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`LINE Bot server is running on port ${port}`);
-  console.log(`Daily timetable notification scheduled for 00:00 JST (15:00 UTC)`);
   keepAlive();
 });
