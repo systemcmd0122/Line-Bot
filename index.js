@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const cron = require('node-cron');
 const { DateTime } = require('luxon');
+const axios = require('axios');
 
 const botLogic = require('./src/botLogic');
 const timetableData = require('./src/timetable');
@@ -183,6 +184,19 @@ app.post('/webhook', line.middleware(config), async (req, res) => {
 app.get('/webhook', (req, res) => {
   res.status(200).send('Webhook is healthy');
 });
+
+// Self-pinging to stay awake on Koyeb (every 10 minutes)
+const SITE_URL = process.env.SITE_URL;
+if (SITE_URL) {
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      console.log(`Self-pinging: ${SITE_URL}`);
+      await axios.get(SITE_URL);
+    } catch (err) {
+      console.error('Self-ping error:', err.message);
+    }
+  });
+}
 
 // Morning Notification Cron Job (7:00 AM JST)
 cron.schedule('0 7 * * *', async () => {
