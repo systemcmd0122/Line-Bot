@@ -2,20 +2,23 @@
  * Flex Message templates for the LINE Bot
  */
 
-function createTimetableFlex(day, subjects) {
+function createTimetableFlex(day, subjects, events = []) {
   const isWeekend = subjects.length === 0;
 
-  const bodyContents = isWeekend
-    ? [
-        {
-          "type": "text",
-          "text": `${day}は授業がありません。`,
-          "size": "md",
-          "color": "#666666",
-          "wrap": true
-        }
-      ]
-    : subjects.map((subject, index) => ({
+  const bodyContents = [];
+
+  // Add subjects
+  if (isWeekend) {
+    bodyContents.push({
+      "type": "text",
+      "text": `${day}は授業がありません。`,
+      "size": "md",
+      "color": "#666666",
+      "wrap": true
+    });
+  } else {
+    subjects.forEach((subject, index) => {
+      bodyContents.push({
         "type": "box",
         "layout": "horizontal",
         "contents": [
@@ -38,7 +41,43 @@ function createTimetableFlex(day, subjects) {
         ],
         "margin": "md",
         "paddingBottom": "sm"
-      }));
+      });
+    });
+  }
+
+  // Add events if any
+  if (events && events.length > 0) {
+    bodyContents.push({
+      "type": "separator",
+      "margin": "xl"
+    });
+    bodyContents.push({
+      "type": "text",
+      "text": "📅 本日の行事",
+      "weight": "bold",
+      "size": "sm",
+      "margin": "md",
+      "color": "#4CAF50"
+    });
+
+    events.forEach(event => {
+      bodyContents.push({
+        "type": "box",
+        "layout": "vertical",
+        "contents": [
+          {
+            "type": "text",
+            "text": event.summary,
+            "size": "sm",
+            "weight": "bold",
+            "wrap": true
+          }
+        ],
+        "margin": "sm",
+        "paddingStart": "md"
+      });
+    });
+  }
 
   return {
     "type": "flex",

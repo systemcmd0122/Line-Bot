@@ -1,6 +1,7 @@
 const { DateTime } = require('luxon');
 const timetableData = require('./timetable');
 const flexTemplates = require('./flexTemplates');
+const googleCalendar = require('./googleCalendar');
 const fs = require('fs');
 const path = require('path');
 
@@ -46,9 +47,9 @@ async function handleEvent(event, client) {
   if (userMessage === '使い方' || userMessage === 'ヘルプ') {
     reply = flexTemplates.createHelpFlex();
   } else if (userMessage === '今日の時間割') {
-    reply = getTodayTimetable();
+    reply = await getTodayTimetable();
   } else if (userMessage === '明日の時間割') {
-    reply = getTomorrowTimetable();
+    reply = await getTomorrowTimetable();
   } else if (userMessage === '通知オン') {
     const added = saveSubscriber(chatId);
     return client.replyMessage(event.replyToken, {
@@ -65,7 +66,7 @@ async function handleEvent(event, client) {
     });
   } else if (userMessage.endsWith('曜日の時間割')) {
     const day = userMessage.replace('の時間割', '');
-    reply = getTimetableForDay(day);
+    reply = await getTimetableForDay(day);
   } else {
     if (!isGroup) {
       return client.replyMessage(event.replyToken, {
@@ -83,21 +84,30 @@ async function handleEvent(event, client) {
   return client.replyMessage(event.replyToken, reply);
 }
 
-function getTodayTimetable() {
+async function getTodayTimetable() {
   const now = DateTime.now().setZone('Asia/Tokyo');
   const dayOfWeek = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'][now.weekday % 7];
-  return getTimetableForDay(dayOfWeek);
+  return getTimetableForDay(dayOfWeek, now);
 }
 
-function getTomorrowTimetable() {
+async function getTomorrowTimetable() {
   const tomorrow = DateTime.now().setZone('Asia/Tokyo').plus({ days: 1 });
   const dayOfWeek = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'][tomorrow.weekday % 7];
-  return getTimetableForDay(dayOfWeek);
+  return getTimetableForDay(dayOfWeek, tomorrow);
 }
 
-function getTimetableForDay(dayOfWeek) {
+async function getTimetableForDay(dayOfWeek, date = null) {
   const subjects = timetableData[dayOfWeek] || [];
-  return flexTemplates.createTimetableFlex(dayOfWeek, subjects);
+  let events = [];
+
+  if (date) {
+    const calendarIds = (process.env.NEXT_PUBLIC_GOOGLE_CALENDAR_ID || '').split(',').filter(id => id.trim());
+    if (calendarIds.length > 0) {
+      events = await googleCalendar.getEventsForDate(calendarIds, date);
+    }
+  }
+
+  return flexTemplates.createTimetableFlex(dayOfWeek, subjects, events);
 }
 
 function saveSubscriber(id) {
