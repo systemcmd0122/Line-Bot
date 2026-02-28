@@ -190,7 +190,7 @@ cron.schedule('0 7 * * *', async () => {
   try {
     if (fs.existsSync(SUBSCRIBERS_FILE)) {
       const subscribers = JSON.parse(fs.readFileSync(SUBSCRIBERS_FILE, 'utf8'));
-      const timetableFlex = botLogic.getTodayTimetable();
+      const timetableFlex = await botLogic.getTodayTimetable();
 
       console.log(`Sending morning notification to ${subscribers.length} subscribers`);
 
