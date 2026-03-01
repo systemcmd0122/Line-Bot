@@ -6,9 +6,11 @@ const fs = require('fs');
 const path = require('path');
 
 const SUBSCRIBERS_FILE = path.join(__dirname, '../data/subscribers.json');
+const CHATS_FILE = path.join(__dirname, '../data/chats.json');
 
 const validCommands = [
   '使い方', 'ヘルプ', '今日の時間割', '明日の時間割',
+  '今日の行事', '明日の行事',
   '月曜日の時間割', '火曜日の時間割', '水曜日の時間割',
   '木曜日の時間割', '金曜日の時間割', '土曜日の時間割', '日曜日の時間割',
   '通知オン', '通知オフ'
@@ -18,6 +20,26 @@ const validCommands = [
  * Handle incoming LINE events
  */
 async function handleEvent(event, client) {
+  // Track chats on follow/join/leave/unfollow events
+  if (['follow', 'join'].includes(event.type)) {
+    const chatId = event.source.userId || event.source.groupId || event.source.roomId;
+    saveChat(chatId, event.source.type);
+    if (event.type === 'join') {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: 'はじめまして！時間割Botです。「使い方」と送ると、できることを確認できます。'
+      });
+    }
+    return null;
+  }
+
+  if (['unfollow', 'leave'].includes(event.type)) {
+    const chatId = event.source.userId || event.source.groupId || event.source.roomId;
+    removeChat(chatId);
+    removeSubscriber(chatId);
+    return null;
+  }
+
   if (event.type !== 'message' || event.message.type !== 'text') {
     return null;
   }
@@ -42,6 +64,9 @@ async function handleEvent(event, client) {
     return null;
   }
 
+  // Ensure chat is tracked
+  saveChat(chatId, source.type);
+
   let reply;
 
   if (userMessage === '使い方' || userMessage === 'ヘルプ') {
@@ -50,6 +75,10 @@ async function handleEvent(event, client) {
     reply = await getTodayTimetable();
   } else if (userMessage === '明日の時間割') {
     reply = await getTomorrowTimetable();
+  } else if (userMessage === '今日の行事') {
+    reply = await getTodayEvents();
+  } else if (userMessage === '明日の行事') {
+    reply = await getTomorrowEvents();
   } else if (userMessage === '通知オン') {
     const added = saveSubscriber(chatId);
     return client.replyMessage(event.replyToken, {
@@ -94,6 +123,20 @@ async function getTomorrowTimetable() {
   const tomorrow = DateTime.now().setZone('Asia/Tokyo').plus({ days: 1 });
   const dayOfWeek = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'][tomorrow.weekday % 7];
   return getTimetableForDay(dayOfWeek, tomorrow);
+}
+
+async function getTodayEvents() {
+  const now = DateTime.now().setZone('Asia/Tokyo');
+  const calendarIds = (process.env.NEXT_PUBLIC_GOOGLE_CALENDAR_ID || '').split(',').filter(id => id.trim());
+  const events = calendarIds.length > 0 ? await googleCalendar.getEventsForDate(calendarIds, now) : [];
+  return flexTemplates.createEventsFlex('今日', events);
+}
+
+async function getTomorrowEvents() {
+  const tomorrow = DateTime.now().setZone('Asia/Tokyo').plus({ days: 1 });
+  const calendarIds = (process.env.NEXT_PUBLIC_GOOGLE_CALENDAR_ID || '').split(',').filter(id => id.trim());
+  const events = calendarIds.length > 0 ? await googleCalendar.getEventsForDate(calendarIds, tomorrow) : [];
+  return flexTemplates.createEventsFlex('明日', events);
 }
 
 async function getTimetableForDay(dayOfWeek, date = null) {
@@ -150,6 +193,50 @@ function removeSubscriber(id) {
     return false;
   } catch (err) {
     console.error('Error removing subscriber:', err);
+    return false;
+  }
+}
+
+function saveChat(id, type) {
+  if (!id) return false;
+  try {
+    if (!fs.existsSync(path.dirname(CHATS_FILE))) {
+      fs.mkdirSync(path.dirname(CHATS_FILE), { recursive: true });
+    }
+
+    let chats = {};
+    if (fs.existsSync(CHATS_FILE)) {
+      chats = JSON.parse(fs.readFileSync(CHATS_FILE, 'utf8'));
+    }
+
+    if (!chats[id]) {
+      chats[id] = { type, addedAt: new Date().toISOString() };
+      fs.writeFileSync(CHATS_FILE, JSON.stringify(chats, null, 2));
+      console.log(`New chat tracked: ${id} (${type})`);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Error saving chat:', err);
+    return false;
+  }
+}
+
+function removeChat(id) {
+  if (!id) return false;
+  try {
+    if (fs.existsSync(CHATS_FILE)) {
+      let chats = JSON.parse(fs.readFileSync(CHATS_FILE, 'utf8'));
+      if (chats[id]) {
+        delete chats[id];
+        fs.writeFileSync(CHATS_FILE, JSON.stringify(chats, null, 2));
+        console.log(`Chat removed: ${id}`);
+        return true;
+      }
+    }
+    return false;
+  } catch (err) {
+    console.error('Error removing chat:', err);
     return false;
   }
 }

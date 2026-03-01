@@ -160,7 +160,7 @@ function createHelpFlex() {
           },
           {
             "type": "text",
-            "text": "• 今日の時間割\n• 明日の時間割\n• 〇曜日の時間割\n• 通知オン / 通知オフ",
+            "text": "• 今日の時間割\n• 今日の行事\n• 明日の時間割 / 行事\n• 〇曜日の時間割\n• 通知オン / 通知オフ",
             "wrap": true,
             "margin": "md"
           }
@@ -221,8 +221,16 @@ function getQuickReplies() {
         "type": "action",
         "action": {
           "type": "message",
-          "label": "今日",
+          "label": "今日の予定",
           "text": "今日の時間割"
+        }
+      },
+      {
+        "type": "action",
+        "action": {
+          "type": "message",
+          "label": "今日の行事",
+          "text": "今日の行事"
         }
       },
       {
@@ -261,8 +269,85 @@ function getQuickReplies() {
   };
 }
 
+function createEventsFlex(day, events = []) {
+  const bodyContents = [];
+
+  if (events.length === 0) {
+    bodyContents.push({
+      "type": "text",
+      "text": `${day}に予定されている行事はありません。`,
+      "size": "md",
+      "color": "#666666",
+      "wrap": true
+    });
+  } else {
+    events.forEach(event => {
+      bodyContents.push({
+        "type": "box",
+        "layout": "vertical",
+        "contents": [
+          {
+            "type": "text",
+            "text": event.summary,
+            "weight": "bold",
+            "size": "md",
+            "wrap": true
+          }
+        ],
+        "margin": "md",
+        "backgroundColor": "#f0fdf4",
+        "cornerRadius": "md",
+        "paddingAll": "md"
+      });
+      if (event.location || event.description) {
+        const details = [];
+        if (event.location) details.push(`📍 ${event.location}`);
+        if (event.description) details.push(event.description);
+
+        bodyContents.push({
+          "type": "text",
+          "text": details.join('\n'),
+          "size": "xs",
+          "color": "#888888",
+          "wrap": true,
+          "margin": "sm",
+          "paddingStart": "md"
+        });
+      }
+    });
+  }
+
+  return {
+    "type": "flex",
+    "altText": `【${day}の行事予定】`,
+    "contents": {
+      "type": "bubble",
+      "header": {
+        "type": "box",
+        "layout": "vertical",
+        "contents": [
+          {
+            "type": "text",
+            "text": `${day} の行事`,
+            "weight": "bold",
+            "size": "xl",
+            "color": "#ffffff"
+          }
+        ],
+        "backgroundColor": "#4CAF50"
+      },
+      "body": {
+        "type": "box",
+        "layout": "vertical",
+        "contents": bodyContents
+      }
+    }
+  };
+}
+
 module.exports = {
   createTimetableFlex,
   createHelpFlex,
-  getQuickReplies
+  getQuickReplies,
+  createEventsFlex
 };
